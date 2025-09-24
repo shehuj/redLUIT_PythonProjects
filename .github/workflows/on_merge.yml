@@ -1,0 +1,65 @@
+name: On Merge to Main — File Presence & Logging (Prod)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  check_and_log_prod:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run check required file
+        id: check_required_files
+        run: |
+          python check_required_files.py
+
+      - name: Configure AWS credentials
+        if: steps.check_required_files.outcome == 'success'
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log success to CloudWatch (prod)
+        if: steps.check_required_files.outcome == 'success'
+        run: |
+          LOG_GROUP="/github-actions/required-files-checker/prod"
+          LOG_STREAM=$(date -u +"%Y-%m-%dT%H:%M:%SZ")  # ISO 8601 UTC
+          COMMIT_SHA="${GITHUB_SHA}"
+          ACTOR="${GITHUB_ACTOR}"
+          WORKFLOW="${GITHUB_WORKFLOW}"
+          TIMESTAMP_MS=$(date +%s%3N)
+
+          echo "Logging to CloudWatch production: group=$LOG_GROUP, stream=$LOG_STREAM"
+
+          # Create log group if it doesn’t exist (ignore error)
+          aws logs create-log-group --log-group-name "$LOG_GROUP" || true
+
+          # Create log stream
+          aws logs create-log-stream --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM"
+
+          # Build JSON log event
+          LOG_EVENT=$(jq -n \
+            --arg wf "$WORKFLOW" \
+            --arg sha "$COMMIT_SHA" \
+            --arg actor "$ACTOR" \
+            --arg ts "$TIMESTAMP_MS" \
+            '[
+              {
+                timestamp: ($ts | tonumber),
+                message: "workflow=\($wf) commit=\($sha) actor=\($actor) timestamp_ms=\($ts)"
+              }
+            ]'
+          )
+
+          # Send the log event
+          aws logs put-log-events \
+            --log-group-name "$LOG_GROUP" \
+            --log-stream-name "$LOG_STREAM" \
+            --log-events "$LOG_EVENT"
