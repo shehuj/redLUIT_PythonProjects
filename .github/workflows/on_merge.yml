@@ -30,7 +30,7 @@ jobs:
         if: steps.check_required_files.outcome == 'success'
         run: |
           LOG_GROUP="/github-actions/required-files-checker/prod"
-          LOG_STREAM=$(date -u +"%Y-%m-%dT%H:%M:%SZ")  # ISO 8601 UTC
+          LOG_STREAM=$(date -u +"%Y/%m/%dT%H-%M-%SZ")  # ISO 8601 UTC
           COMMIT_SHA="${GITHUB_SHA}"
           ACTOR="${GITHUB_ACTOR}"
           WORKFLOW="${GITHUB_WORKFLOW}"
