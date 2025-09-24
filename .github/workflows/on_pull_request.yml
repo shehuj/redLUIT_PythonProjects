@@ -1,4 +1,4 @@
-name: PR to Main Checks (No Test Stage)
+name: PR to Main Checks
 
 on:
   pull_request:
@@ -23,4 +23,6 @@ jobs:
           echo "Head branch: ${{ github.head_ref }}"
           echo "Base branch: ${{ github.event.pull_request.base.ref }}"
 
-      # You can insert other checks/steps here (linting, file-presence checks, etc.)
+      - name: Run required files check
+        run: |
+          python check_required_files.py
