@@ -1,63 +1,63 @@
 import os
 import sys
+import json
+from datetime import datetime, timezone
 
-# Default required files if no config is found
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 DEFAULT_REQUIRED_FILES = ['.gitignore', 'README.md']
 
-def load_required_files():
-    """
-    If a `.required-files.yml` file exists in the same directory as this script,
-    load it and return the list under the `required_files` key.
-    Otherwise return DEFAULT_REQUIRED_FILES.
-    If malformed, print error and exit.
-    """
-    try:
-        import yaml
-    except ImportError:
-        yaml = None
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, '.required-files.yml')
-    if os.path.isfile(config_path):
+def load_required_files(script_dir):
+    cfg_path = os.path.join(script_dir, '.required-files.yml')
+    if os.path.isfile(cfg_path):
         if yaml is None:
-            print("Error: yaml module not found, but .required-files.yml exists.")
-            print("Please install PyYAML (pip install pyyaml).")
+            print("Error: PyYAML not installed, but config file exists.")
             sys.exit(1)
         try:
-            with open(config_path, 'r') as f:
+            with open(cfg_path, 'r') as f:
                 cfg = yaml.safe_load(f)
-            if not isinstance(cfg, dict):
-                raise ValueError("Configuration file must be a mapping (dictionary).")
-            if 'required_files' not in cfg:
-                raise ValueError("Configuration missing 'required_files' key.")
+            if not isinstance(cfg, dict) or 'required_files' not in cfg:
+                raise ValueError("Malformed config")
             rf = cfg['required_files']
-            if not isinstance(rf, list) or not all(isinstance(item, str) for item in rf):
-                raise ValueError("'required_files' must be a list of strings.")
+            if not isinstance(rf, list) or not all(isinstance(i, str) for i in rf):
+                raise ValueError("required_files must be list of strings")
             return rf
         except Exception as e:
-            print(f"Error reading configuration from {config_path}: {e}")
+            print(json.dumps({
+                "required_files": [],
+                "present_files": [],
+                "missing_files": [],
+                "error": str(e)
+            }))
             sys.exit(1)
-    # No config file — use default
     return DEFAULT_REQUIRED_FILES
 
-def check_required_files(required_files):
+def audit_file_check():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-
+    required = load_required_files(script_dir)
+    present = []
     missing = []
-    for fname in required_files:
-        path = os.path.join(script_dir, fname)
-        if not os.path.isfile(path):
-            missing.append((fname, path))
-
-    if missing:
-        print("Error: The following required files are missing (looked in same directory as script):")
-        for fname, path in missing:
-            print(f" - {fname}, expected at: {path}")
-        sys.exit(1)
-    
-#    else:
-#       print("All required files are present at:", script_dir)
+    for fname in required:
+        p = os.path.join(script_dir, fname)
+        if os.path.isfile(p):
+            present.append(fname)
+        else:
+            missing.append(fname)
+    result = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "required_files": required,
+        "present_files": present,
+        "missing_files": missing
+    }
+    success = (len(missing) == 0)
+    return success, result
 
 if __name__ == '__main__':
-    required = load_required_files()
-    check_required_files(required)
+    from datetime import datetime
+    success, ctx = audit_file_check()
+    print(json.dumps(ctx))
+    if not success:
+        sys.exit(1)
