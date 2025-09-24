@@ -1,0 +1,26 @@
+name: PR to Main Checks (No Test Stage)
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  pr_checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display PR info
+        run: |
+          echo "Pull Request #${{ github.event.pull_request.number }}"
+          echo "Head branch: ${{ github.head_ref }}"
+          echo "Base branch: ${{ github.event.pull_request.base.ref }}"
+
+      # You can insert other checks/steps here (linting, file-presence checks, etc.)
