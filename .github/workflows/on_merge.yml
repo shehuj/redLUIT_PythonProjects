@@ -16,56 +16,77 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyyaml
+          pip install pyyaml jq
 
-      - name: Run check required file
-        id: check_required_files
+      - name: Run required files audit
+        id: file_audit
         run: |
-          python check_required_files.py
+          # Run the script which should output JSON with required/present/missing
+          audit_json=$(python check_required_files.py)
+          echo "Audit JSON: $audit_json"
+          # Save it so later steps can use it
+          echo "$audit_json" > audit_output.json
+          # Continue (exit code of script controls success/failure)
 
       - name: Configure AWS credentials
-        if: steps.check_required_files.outcome == 'success'
+        if: steps.file_audit.outcome == 'success'
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Log success to CloudWatch (prod)
-        if: steps.check_required_files.outcome == 'success'
+      - name: Log enriched audit to CloudWatch (prod)
+        if: steps.file_audit.outcome == 'success'
         run: |
           LOG_GROUP="/github-actions/required-files-checker/prod"
 
-          LOG_STREAM=$(date -u +"%Y/%m/%dT%H-%M-%SZ")  # ISO 8601 UTC
-          COMMIT_SHA="${GITHUB_SHA}"
+          # Use a timestamp without colons for the log stream name (valid pattern: no ':' or '*')  [oai_citation:0‡AWS Documentation](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogStream.html?utm_source=chatgpt.com)
+          LOG_STREAM=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+
+          # GitHub / repo context
+          REPO="${GITHUB_REPOSITORY}"
+          BRANCH="${GITHUB_REF##*/}"
+          EVENT="${GITHUB_EVENT_NAME}"
+          SHA="${GITHUB_SHA}"
           ACTOR="${GITHUB_ACTOR}"
-          WORKFLOW="${GITHUB_WORKFLOW}"
-          TIMESTAMP_MS=$(date +%s%3N)
 
-          echo "Logging to CloudWatch production: group=$LOG_GROUP, stream=$LOG_STREAM"
+          # Load the audit context JSON from earlier
+          CONTEXT=$(cat audit_output.json)
 
-          # Create log group if it doesn’t exist (ignore error)
+          echo "Logging to: group=$LOG_GROUP, stream=$LOG_STREAM"
+          echo "Context: $CONTEXT"
+
+          # Create log group if missing (ignore error)  
           aws logs create-log-group --log-group-name "$LOG_GROUP" || true
 
           # Create log stream
           aws logs create-log-stream --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM"
 
-          # Build JSON log event
-          LOG_EVENT=$(jq -n \
-            --arg wf "$WORKFLOW" \
-            --arg sha "$COMMIT_SHA" \
+          # Compose a JSON object combining everything
+          inner_message=$(jq -n \
+            --arg repo "$REPO" \
+            --arg branch "$BRANCH" \
+            --arg event "$EVENT" \
+            --arg sha "$SHA" \
             --arg actor "$ACTOR" \
-            --arg ts "$TIMESTAMP_MS" \
-            '[
-              {
-                timestamp: ($ts | tonumber),
-                message: "workflow=\($wf) commit=\($sha) actor=\($actor) timestamp_ms=\($ts)"
-              }
-            ]'
+            --arg ctx "$CONTEXT" \
+            '{
+              repository: $repo,
+              branch: $branch,
+              event: $event,
+              commit_sha: $sha,
+              actor: $actor,
+              audit: ($ctx | fromjson)
+            }'
           )
 
-          # Send the log event
+          # Prepare for AWS CLI
+          timestamp_ms=$(date +%s%3N)
+          # Escape the JSON as a string for the `message` field
+          msg_escaped=$(echo "$inner_message" | jq -Rs '.')
+
           aws logs put-log-events \
             --log-group-name "$LOG_GROUP" \
             --log-stream-name "$LOG_STREAM" \
-            --log-events "$LOG_EVENT"
+            --log-events timestamp=$timestamp_ms,message="$msg_escaped"
