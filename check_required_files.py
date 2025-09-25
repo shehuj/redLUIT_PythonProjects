@@ -8,7 +8,11 @@ try:
 except ImportError:
     yaml = None
 
-DEFAULT_REQUIRED_FILES = ['.gitignore', 'README.md']
+DEFAULT_REQUIRED_FILES = [
+    '.gitignore',
+    'README.md',
+    'requirements.txt'
+]
 
 def load_required_files(script_dir):
     cfg_path = os.path.join(script_dir, '.required-files.yml')
@@ -20,11 +24,12 @@ def load_required_files(script_dir):
             with open(cfg_path, 'r') as f:
                 cfg = yaml.safe_load(f)
             if not isinstance(cfg, dict) or 'required_files' not in cfg:
-                raise ValueError("Malformed config")
+                raise ValueError("Malformed config: missing 'required_files' key or not dict.")
             rf = cfg['required_files']
             if not isinstance(rf, list) or not all(isinstance(i, str) for i in rf):
-                raise ValueError("required_files must be list of strings")
-            return rf
+                raise ValueError("'required_files' must be a list of strings.")
+            rf_clean = [i.strip() for i in rf]  # Strip whitespace
+            return rf_clean
         except Exception as e:
             print(json.dumps({
                 "required_files": [],
@@ -38,26 +43,39 @@ def load_required_files(script_dir):
 def audit_file_check():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     required = load_required_files(script_dir)
+
     present = []
     missing = []
+    debug_info = {}
+
     for fname in required:
-        p = os.path.join(script_dir, fname)
-        if os.path.isfile(p):
-            present.append(fname)
+        fname_clean = fname.strip()
+        p = os.path.join(script_dir, fname_clean)
+        exists = os.path.isfile(p)
+        debug_info[fname_clean] = {
+            "path_checked": p,
+            "exists": exists
+        }
+        if exists:
+            present.append(fname_clean)
         else:
-            missing.append(fname)
+            missing.append(fname_clean)
+
     result = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "required_files": required,
         "present_files": present,
-        "missing_files": missing
+        "missing_files": missing,
+        "debug": debug_info
     }
-    success = (len(missing) == 0)
-    return success, result
+
+    # Exit if any required file is missing
+    if missing:
+        print(json.dumps(result))
+        sys.exit(1)
+
+    print(json.dumps(result))
+    return True
 
 if __name__ == '__main__':
-    from datetime import datetime
-    success, ctx = audit_file_check()
-    print(json.dumps(ctx))
-    if not success:
-        sys.exit(1)
+    audit_file_check()
