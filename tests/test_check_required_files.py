@@ -1,9 +1,11 @@
 import os
 import sys
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import pytest
 from unittest.mock import patch
 from check_required_files import load_required_files, audit_file_check
+
 
 # Check all required files are present
 @patch("os.path.isfile")
